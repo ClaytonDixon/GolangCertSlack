@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -18,8 +19,7 @@ import (
 )
 
 const (
-	ExpirationThresholdDays = 14
-	TEST_MODE               = true // Set to false to use real API
+	TEST_MODE = false // Set to false to use real API
 )
 
 type Certificate struct {
@@ -54,6 +54,15 @@ type DigiCertPage struct {
 	Total  int `json:"total"`
 	Limit  int `json:"limit"`
 	Offset int `json:"offset"`
+}
+
+func getExpirationThreshold() int {
+	if threshold := os.Getenv("EXPIRATION_THRESHOLD_DAYS"); threshold != "" {
+		if days, err := strconv.Atoi(threshold); err == nil {
+			return days
+		}
+	}
+	return 14 // Default value
 }
 
 func getSecret(ctx context.Context, secretName string) (string, error) {
@@ -275,15 +284,15 @@ func getAWSCertificates(ctx context.Context) ([]Certificate, error) {
 }
 
 func filterExpiringCertificates(certs []Certificate) []Certificate {
+	threshold := getExpirationThreshold()
 	var expiring []Certificate
 
 	for _, cert := range certs {
-		if cert.DaysLeft <= ExpirationThresholdDays && cert.DaysLeft >= 0 {
+		if cert.DaysLeft <= threshold && cert.DaysLeft >= 0 {
 			expiring = append(expiring, cert)
 		}
 	}
 
-	// Sort by days left (most urgent first
 	sort.Slice(expiring, func(i, j int) bool {
 		return expiring[i].DaysLeft < expiring[j].DaysLeft
 	})
@@ -324,6 +333,7 @@ func sendSlackNotification(certs []Certificate, webhookURL string) error {
 }
 
 func buildSlackMessage(certs []Certificate) []map[string]interface{} {
+	threshold := getExpirationThreshold()
 	blocks := []map[string]interface{}{
 		{
 			"type": "header",
@@ -336,7 +346,7 @@ func buildSlackMessage(certs []Certificate) []map[string]interface{} {
 			"type": "section",
 			"text": map[string]string{
 				"type": "mrkdwn",
-				"text": fmt.Sprintf("*%d* certificates expiring within *%d* days", len(certs), ExpirationThresholdDays),
+				"text": fmt.Sprintf("*%d* certificates expiring within *%d* days", len(certs), threshold),
 			},
 		},
 		{
